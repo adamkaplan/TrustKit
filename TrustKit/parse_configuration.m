@@ -286,6 +286,30 @@ NSDictionary *parseTrustKitConfiguration(NSDictionary *trustKitArguments)
             [serverSslPinsSet addObject:pinnedKeyHash];
         }
         
+        // Save the hashes for this server as an NSSet for quick lookup
+        domainFinalConfiguration[kTSKPublicKeyHashes] = [NSSet setWithSet:serverSslPinsSet];
+        
+        // Extract and convert the BACKUP subject public key info hashes
+        domainFinalConfiguration[kTSKBackupPublicKeyHashes] = ({
+            NSMutableSet<NSData *> *backupSslPinsSet = [NSMutableSet set];
+            
+            NSArray<NSString *> *backupSslPinsBase64 = domainPinningPolicy[kTSKBackupPublicKeyHashes];
+            for (NSString *pinnedKeyHashBase64 in backupSslPinsBase64)
+            {
+                NSData *pinnedKeyHash = [[NSData alloc] initWithBase64EncodedString:pinnedKeyHashBase64
+                                                                            options:(NSDataBase64DecodingOptions)0];
+                if (pinnedKeyHash.length != CC_SHA256_DIGEST_LENGTH)
+                {
+                    // The subject public key info hash doesn't have a valid size
+                    [NSException raise:@"TrustKit configuration invalid"
+                                format:@"TrustKit was initialized with an invalid backup pin %@ for domain %@", pinnedKeyHashBase64, domainName];
+                }
+                
+                [backupSslPinsSet addObject:pinnedKeyHash];
+            }
+            
+            [backupSslPinsSet copy];
+        });
         
         NSUInteger requiredNumberOfPins = [domainFinalConfiguration[kTSKEnforcePinning] boolValue] ? 2 : 1;
         if([serverSslPinsSet count] < requiredNumberOfPins)
@@ -293,9 +317,7 @@ NSDictionary *parseTrustKitConfiguration(NSDictionary *trustKitArguments)
             [NSException raise:@"TrustKit configuration invalid"
                         format:@"TrustKit was initialized with less than %lu pins (ie. no backup pins) for domain %@. This might brick your App; please review the Getting Started guide in ./docs/getting-started.md", (unsigned long)requiredNumberOfPins, domainName];
         }
-        
-        // Save the hashes for this server as an NSSet for quick lookup
-        domainFinalConfiguration[kTSKPublicKeyHashes] = [NSSet setWithSet:serverSslPinsSet];
+
         
         // Store the whole configuration
         finalConfiguration[kTSKPinnedDomains][domainName] = [NSDictionary dictionaryWithDictionary:domainFinalConfiguration];
