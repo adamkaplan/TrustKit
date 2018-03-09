@@ -148,6 +148,7 @@
                                                                            serverHostname,
                                                                            domainConfig[kTSKPublicKeyAlgorithms],
                                                                            domainConfig[kTSKPublicKeyHashes],
+                                                                           domainConfig[kTSKBackupPublicKeyHashes],
                                                                            self.spkiHashCache);
             
             if (validationResult == TSKTrustEvaluationSuccess)
