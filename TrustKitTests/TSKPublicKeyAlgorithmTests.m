@@ -135,6 +135,7 @@
                                             @"www.good.com",
                                             trustKitConfig[kTSKPinnedDomains][@"www.good.com"][kTSKPublicKeyAlgorithms],
                                             trustKitConfig[kTSKPinnedDomains][@"www.good.com"][kTSKPublicKeyHashes],
+                                            nil,
                                             spkiCache);
     
     // Ensure the SPKI cache was used; the full certificate chain is three certs and we have to go through all of them to get to the pinned leaf

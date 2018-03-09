@@ -71,7 +71,7 @@ TSKTrustEvaluationResult verifyPublicKeyPin(SecTrustRef serverTrust, NSString *s
             // trust chain.
             CFIndex leafCertIndex = certificateChainLen - 1;
             SecCertificateRef certificate = SecTrustGetCertificateAtIndex(serverTrust, leafCertIndex);
-            TSKTrustEvaluationResult result = verifyCertificatePublicKeyPin(certificate, serverHostname, supportedAlgorithms, knownPins, hashCache);
+            TSKTrustEvaluationResult result = verifyCertificatePublicKeyPin(certificate, serverHostname, supportedAlgorithms, fallbackKnownPins, hashCache);
             
             CFDictionaryRef evaluationDetails = SecTrustCopyResult(serverTrust);
             TSKLog(@"Error: default AND backup SSL validation both failed for %@: %@", serverHostname, evaluationDetails);
