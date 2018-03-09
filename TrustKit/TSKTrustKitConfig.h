@@ -104,6 +104,20 @@ FOUNDATION_EXPORT const TSKDomainConfigurationKey kTSKPublicKeyHashes;
 
 
 /**
+ Backup "break glass" public key pins for emergency situations where the well-known
+ proper root-trusted SSL certificates are compromised. These keys provide facility
+ for using well-known-but-not-trusted SSL certificates. Use is recommended only for
+ organizations with extensive experience securing very sensitive private keys, both
+ at rest and in-app. These keys are consulted only when the SSL certificate to validate
+ fails default SSL trust validation.
+ 
+ Similar to `kTSKPublicKeyHashes`, this is an array of SSL pins where each pin is
+ the base64-encoded SHA-256 hash of a certificate's Subject Public Key Info.
+ */
+FOUNDATION_EXPORT const TSKDomainConfigurationKey kTSKBackupPublicKeyHashes;
+
+
+/**
  An array of `TSKSupportedAlgorithm` constants to specify the public key algorithms for the
  keys to be pinned.
  

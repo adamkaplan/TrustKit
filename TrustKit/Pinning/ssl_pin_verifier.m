@@ -18,7 +18,8 @@
 
 #pragma mark SSL Pin Verifier
 
-TSKTrustEvaluationResult verifyPublicKeyPin(SecTrustRef serverTrust, NSString *serverHostname, NSArray<NSNumber *> *supportedAlgorithms, NSSet<NSData *> *knownPins, TSKSPKIHashCache *hashCache)
+TSKTrustEvaluationResult verifyPublicKeyPin(SecTrustRef serverTrust, NSString *serverHostname, NSArray<NSNumber *> *supportedAlgorithms,
+                                            NSSet<NSData *> *knownPins, NSSet<NSData *> *fallbackKnownPins, TSKSPKIHashCache *hashCache)
 {
     NSCParameterAssert(serverTrust);
     NSCParameterAssert(supportedAlgorithms);
@@ -48,47 +49,49 @@ TSKTrustEvaluationResult verifyPublicKeyPin(SecTrustRef serverTrust, NSString *s
         return TSKTrustEvaluationErrorInvalidParameters;
     }
     
+    CFIndex certificateChainLen = SecTrustGetCertificateCount(serverTrust);
+    
     if ((trustResult != kSecTrustResultUnspecified) && (trustResult != kSecTrustResultProceed))
     {
-        // Default SSL validation failed
-        CFDictionaryRef evaluationDetails = SecTrustCopyResult(serverTrust);
-        TSKLog(@"Error: default SSL validation failed for %@: %@", serverHostname, evaluationDetails);
-        CFRelease(evaluationDetails);
-        CFRelease(serverTrust);
-        return TSKTrustEvaluationFailedInvalidCertificateChain;
+        // If no fallback pins were provided, abort immediately due to failed trust chain
+        if (fallbackKnownPins.count == 0 && certificateChainLen > 0)
+        {
+            // Default SSL validation failed
+            CFDictionaryRef evaluationDetails = SecTrustCopyResult(serverTrust);
+            TSKLog(@"Error: default SSL validation failed for %@: %@", serverHostname, evaluationDetails);
+            CFRelease(evaluationDetails);
+            CFRelease(serverTrust);
+            return TSKTrustEvaluationFailedInvalidCertificateChain;
+        }
+        else
+        {
+            // If SSL trust validation has failed, allow only emergency pin validation
+            // against the SSL leaf certificate. If this operation is successful, then
+            // we can trust the certificate, otherwise continue treating as invalid
+            // trust chain.
+            CFIndex leafCertIndex = certificateChainLen - 1;
+            SecCertificateRef certificate = SecTrustGetCertificateAtIndex(serverTrust, leafCertIndex);
+            TSKTrustEvaluationResult result = verifyCertificatePublicKeyPin(certificate, serverHostname, supportedAlgorithms, fallbackKnownPins, hashCache);
+            
+            CFDictionaryRef evaluationDetails = SecTrustCopyResult(serverTrust);
+            TSKLog(@"Error: default AND backup SSL validation both failed for %@: %@", serverHostname, evaluationDetails);
+            CFRelease(evaluationDetails);
+            CFRelease(serverTrust);
+            return result == TSKTrustEvaluationSuccess ? TSKTrustEvaluationSuccess : TSKTrustEvaluationFailedInvalidCertificateChain;
+        }
     }
     
     // Check each certificate in the server's certificate chain (the trust object); start with the CA all the way down to the leaf
-    CFIndex certificateChainLen = SecTrustGetCertificateCount(serverTrust);
-    for(int i=(int)certificateChainLen-1;i>=0;i--)
+    for(CFIndex i=certificateChainLen-1;i>=0;i--)
     {
         // Extract the certificate
         SecCertificateRef certificate = SecTrustGetCertificateAtIndex(serverTrust, i);
-        CFStringRef certificateSubject = SecCertificateCopySubjectSummary(certificate);
-        TSKLog(@"Checking certificate with CN: %@", certificateSubject);
-        CFRelease(certificateSubject);
+        TSKTrustEvaluationResult result = verifyCertificatePublicKeyPin(certificate, serverHostname, supportedAlgorithms, knownPins, hashCache);
         
-        // For each public key algorithm flagged as supported in the config, generate the subject public key info hash
-        for (NSNumber *savedAlgorithm in supportedAlgorithms)
+        if (result != TSKTrustEvaluationFailedNoMatchingPin)
         {
-            TSKPublicKeyAlgorithm algorithm = [savedAlgorithm integerValue];
-            NSData *subjectPublicKeyInfoHash = [hashCache hashSubjectPublicKeyInfoFromCertificate:certificate
-                                                                               publicKeyAlgorithm:algorithm];
-            if (subjectPublicKeyInfoHash == nil)
-            {
-                TSKLog(@"Error - could not generate the SPKI hash for %@", serverHostname);
-                CFRelease(serverTrust);
-                return TSKTrustEvaluationErrorCouldNotGenerateSpkiHash;
-            }
-            
-            // Is the generated hash in our set of pinned hashes ?
-            TSKLog(@"Testing SSL Pin %@", subjectPublicKeyInfoHash);
-            if ([knownPins containsObject:subjectPublicKeyInfoHash])
-            {
-                TSKLog(@"SSL Pin found for %@", serverHostname);
-                CFRelease(serverTrust);
-                return TSKTrustEvaluationSuccess;
-            }
+            CFRelease(serverTrust);
+            return result;
         }
     }
     
@@ -137,3 +140,38 @@ TSKTrustEvaluationResult verifyPublicKeyPin(SecTrustRef serverTrust, NSString *s
     CFRelease(serverTrust);
     return TSKTrustEvaluationFailedNoMatchingPin;
 }
+
+TSKTrustEvaluationResult verifyCertificatePublicKeyPin(SecCertificateRef certificate,
+                                                       NSString *serverHostname,
+                                                       NSArray<NSNumber *> *supportedAlgorithms,
+                                                       NSSet<NSData *> *knownPins,
+                                                       TSKSPKIHashCache *hashCache)
+{
+    CFStringRef certificateSubject = SecCertificateCopySubjectSummary(certificate);
+    TSKLog(@"Checking certificate with CN: %@", certificateSubject);
+    CFRelease(certificateSubject);
+    
+    // For each public key algorithm flagged as supported in the config, generate the subject public key info hash
+    for (NSNumber *savedAlgorithm in supportedAlgorithms)
+    {
+        TSKPublicKeyAlgorithm algorithm = [savedAlgorithm integerValue];
+        NSData *subjectPublicKeyInfoHash = [hashCache hashSubjectPublicKeyInfoFromCertificate:certificate
+                                                                           publicKeyAlgorithm:algorithm];
+        if (subjectPublicKeyInfoHash == nil)
+        {
+            TSKLog(@"Error - could not generate the SPKI hash for %@", serverHostname);
+            return TSKTrustEvaluationErrorCouldNotGenerateSpkiHash;
+        }
+        
+        // Is the generated hash in our set of pinned hashes ?
+        TSKLog(@"Testing SSL Pin %@", subjectPublicKeyInfoHash);
+        if ([knownPins containsObject:subjectPublicKeyInfoHash])
+        {
+            TSKLog(@"SSL Pin found for %@", serverHostname);
+            return TSKTrustEvaluationSuccess;
+        }
+    }
+    
+    return TSKTrustEvaluationFailedNoMatchingPin;
+}
+
